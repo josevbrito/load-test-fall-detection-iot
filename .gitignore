@@ -1,0 +1,26 @@
+# Credenciais e variáveis de ambiente
+.env
+
+# Tokens dos devices (13 MB+, gerado pelo provision_devices.py)
+device_tokens.json
+
+# Resultados de load test (gerado automaticamente)
+results/
+
+# Cache do Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# Imagens locais (não versionadas)
+images/
+
+# Diretório de memória do Claude Code
+.claude/

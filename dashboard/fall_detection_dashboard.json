@@ -1,0 +1,335 @@
+{
+  "title": "Fall Detection IoT — Load Test Dashboard",
+  "configuration": {
+    "widgets": {
+      "w_mag_card": {
+        "isSystemType": true,
+        "bundleAlias": "cards",
+        "typeAlias": "simple_card",
+        "type": "latest",
+        "title": "Magnitude Atual (g)",
+        "showTitle": true,
+        "col": 0,
+        "row": 0,
+        "sizeX": 3,
+        "sizeY": 2,
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "all_sensors",
+              "dataKeys": [
+                {
+                  "name": "magnitude",
+                  "type": "timeseries",
+                  "label": "Magnitude (g)",
+                  "color": "rgba(255,107,53,1)",
+                  "settings": {}
+                }
+              ]
+            }
+          ],
+          "settings": {
+            "labelPosition": "top",
+            "decimals": 3
+          },
+          "title": "Magnitude Atual (g)",
+          "showTitle": true,
+          "backgroundColor": "#1a1a2e",
+          "color": "rgba(255,107,53,1)"
+        }
+      },
+      "w_fall_card": {
+        "isSystemType": true,
+        "bundleAlias": "cards",
+        "typeAlias": "simple_card",
+        "type": "latest",
+        "title": "Queda Detectada",
+        "showTitle": true,
+        "col": 0,
+        "row": 2,
+        "sizeX": 3,
+        "sizeY": 2,
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "all_sensors",
+              "dataKeys": [
+                {
+                  "name": "fall_detected",
+                  "type": "timeseries",
+                  "label": "Queda Detectada",
+                  "color": "rgba(231,76,60,1)",
+                  "settings": {}
+                }
+              ]
+            }
+          ],
+          "settings": {
+            "labelPosition": "top",
+            "decimals": 3
+          },
+          "title": "Queda Detectada",
+          "showTitle": true,
+          "backgroundColor": "#1a1a2e",
+          "color": "rgba(231,76,60,1)"
+        }
+      },
+      "w_mag_ts": {
+        "isSystemType": true,
+        "bundleAlias": "charts",
+        "typeAlias": "basic_timeseries",
+        "type": "timeseries",
+        "title": "Magnitude da Aceleração — ${entityName}",
+        "showTitle": true,
+        "col": 3,
+        "row": 0,
+        "sizeX": 9,
+        "sizeY": 4,
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "single_device",
+              "dataKeys": [
+                {
+                  "name": "magnitude",
+                  "type": "timeseries",
+                  "label": "Magnitude (g)",
+                  "color": "#ff6b35",
+                  "settings": {},
+                  "postFuncBody": "return value;",
+                  "usePostProcessing": false,
+                  "hidden": false
+                }
+              ]
+            }
+          ],
+          "settings": {
+            "shadowSize": 3,
+            "smoothLines": true,
+            "showLegend": true,
+            "yaxis": {
+              "min": 0,
+              "max": 5
+            },
+            "xaxis": {
+              "showLabels": true
+            },
+            "decimals": 3
+          },
+          "title": "Magnitude da Aceleração — ${entityName}",
+          "showTitle": true
+        }
+      },
+      "w_axes_ts": {
+        "isSystemType": true,
+        "bundleAlias": "charts",
+        "typeAlias": "basic_timeseries",
+        "type": "timeseries",
+        "title": "Aceleração X, Y, Z — ${entityName}",
+        "showTitle": true,
+        "col": 0,
+        "row": 4,
+        "sizeX": 9,
+        "sizeY": 4,
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "single_device",
+              "dataKeys": [
+                {
+                  "name": "accel_x",
+                  "type": "timeseries",
+                  "label": "Eixo X (g)",
+                  "color": "#e74c3c",
+                  "settings": {},
+                  "postFuncBody": "return value;",
+                  "usePostProcessing": false,
+                  "hidden": false
+                },
+                {
+                  "name": "accel_y",
+                  "type": "timeseries",
+                  "label": "Eixo Y (g)",
+                  "color": "#2ecc71",
+                  "settings": {},
+                  "postFuncBody": "return value;",
+                  "usePostProcessing": false,
+                  "hidden": false
+                },
+                {
+                  "name": "accel_z",
+                  "type": "timeseries",
+                  "label": "Eixo Z (g)",
+                  "color": "#3498db",
+                  "settings": {},
+                  "postFuncBody": "return value;",
+                  "usePostProcessing": false,
+                  "hidden": false
+                }
+              ]
+            }
+          ],
+          "settings": {
+            "shadowSize": 3,
+            "smoothLines": true,
+            "showLegend": true,
+            "yaxis": {
+              "min": -4,
+              "max": 4
+            },
+            "xaxis": {
+              "showLabels": true
+            },
+            "decimals": 3
+          },
+          "title": "Aceleração X, Y, Z — ${entityName}",
+          "showTitle": true
+        }
+      },
+      "w_map": {
+        "isSystemType": true,
+        "bundleAlias": "cards",
+        "typeAlias": "entities_table",
+        "type": "latest",
+        "title": "Dispositivos — clique para inspecionar",
+        "showTitle": true,
+        "col": 9,
+        "row": 4,
+        "sizeX": 3,
+        "sizeY": 4,
+        "config": {
+          "datasources": [
+            {
+              "type": "entity",
+              "entityAliasId": "all_sensors",
+              "dataKeys": [
+                {
+                  "name": "latitude",
+                  "type": "timeseries",
+                  "label": "Lat",
+                  "color": "#2980b9",
+                  "settings": {}
+                },
+                {
+                  "name": "longitude",
+                  "type": "timeseries",
+                  "label": "Lon",
+                  "color": "#2980b9",
+                  "settings": {}
+                },
+                {
+                  "name": "magnitude",
+                  "type": "timeseries",
+                  "label": "Magnitude",
+                  "color": "#ff6b35",
+                  "settings": {}
+                }
+              ]
+            }
+          ],
+          "settings": {},
+          "title": "Dispositivos — clique para inspecionar",
+          "showTitle": true,
+          "actions": {
+            "rowClick": [
+              {
+                "id": "action_select_device",
+                "name": "Selecionar Device",
+                "icon": "more_horiz",
+                "type": "updateDashboardState",
+                "targetDashboardStateId": null,
+                "openRightLayout": false,
+                "setEntityId": true,
+                "stateEntityParamName": "entityId"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "entityAliases": {
+      "all_sensors": {
+        "id": "all_sensors",
+        "alias": "all_sensors",
+        "filter": {
+          "type": "entityType",
+          "resolveMultiple": true,
+          "singleEntity": null,
+          "entityList": [],
+          "entityType": "DEVICE",
+          "relationType": null,
+          "deviceTypes": [
+            "fall-detector"
+          ],
+          "entityGroupsList": [],
+          "groupStateEntity": false
+        }
+      },
+      "single_device": {
+        "id": "single_device",
+        "alias": "single_device",
+        "filter": {
+          "type": "stateEntity",
+          "resolveMultiple": false,
+          "singleEntity": null,
+          "entityList": [],
+          "entityType": null,
+          "relationType": null,
+          "deviceTypes": [],
+          "entityGroupsList": [],
+          "groupStateEntity": false,
+          "stateEntityParamName": "entityId"
+        }
+      }
+    },
+    "filters": {},
+    "timewindow": {
+      "displayValue": "",
+      "selectedTab": 0,
+      "realtime": {
+        "realtimeType": 1,
+        "interval": 1000,
+        "timewindowMs": 3600000,
+        "quickInterval": "CURRENT_HOUR"
+      },
+      "history": {
+        "historyType": 0,
+        "interval": 1000,
+        "timewindowMs": 86400000,
+        "fixedTimewindow": {
+          "startTimeMs": 0,
+          "endTimeMs": 0
+        },
+        "quickInterval": "CURRENT_DAY"
+      },
+      "aggregation": {
+        "type": "AVG",
+        "limit": 25000
+      }
+    },
+    "settings": {
+      "stateControllerId": "entity",
+      "showTitle": true,
+      "showDashboardsSelect": true,
+      "showEntitiesSelect": true,
+      "showDashboardTimewindow": true,
+      "showDashboardExport": true,
+      "toolbarAlwaysOpen": false
+    },
+    "gridSettings": {
+      "backgroundColor": "#0d1117",
+      "backgroundSizeMode": "100%",
+      "columns": 12,
+      "margin": 10,
+      "outerMargin": true,
+      "autoFillHeight": true,
+      "mobileAutoFillHeight": false,
+      "mobileRowHeight": 70
+    }
+  },
+  "assignedCustomers": []
+}

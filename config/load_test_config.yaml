@@ -1,0 +1,32 @@
+load_test:
+  n_devices: 100000
+  requests_per_device: 100
+  interval_ms: 100              # 100 ms entre publicações por device
+  fall_probability: 0.05        # 5 % dos devices terão exatamente 1 queda na sessão
+  fall_mode: "session"          # "session" = 1 queda por device  |  "per_request" = prob. por leitura
+  max_concurrent_connects: 5000 # conexões MQTT ativas simultaneamente (semáforo)
+  connect_delay_ms: 0           # sem stagger: o semáforo controla o ramp-up
+  provision_concurrency: 150    # requisições HTTP paralelas ao provisionar devices
+
+sensor:
+  # Valores de calibração iguais ao firmware real (config.h)
+  fall_threshold_g: 2.0     # spike de aceleração para detectar impacto
+  rest_threshold_g: 0.3     # magnitude baixa para confirmar queda
+  rest_duration_ms: 1500    # tempo em repouso para confirmar queda
+  accel_range_g: 4.0        # range do MPU6050 (±4g)
+  noise_std_g: 0.02         # ruído gaussiano do sensor real
+  gravity_g: 1.0            # componente gravitacional em repouso
+
+location:
+  # Campus UFMA - São Luís, MA (local real do projeto)
+  base_lat: -2.5489
+  base_lon: -44.2029
+  drift_radius_km: 1.5      # raio de drift dos dispositivos ao redor do campus
+
+thingsboard:
+  host: localhost
+  http_port: 8080
+  mqtt_port: 1883
+  device_profile: fall-detector
+  device_name_prefix: "fall-sensor"
+  tokens_file: "device_tokens.json"
