@@ -1,0 +1,55 @@
+# Dockerfile.sensor
+# ------------------
+# Imagem do nó sensor distribuído.
+# Cada container desta imagem simula uma fatia do pool de devices ESP32,
+# publicando telemetria MQTT para o ThingsBoard.
+#
+# Variáveis de ambiente (todas sobrescrevíveis em runtime):
+#   TB_HOST        → hostname do ThingsBoard na rede Docker  (padrão: thingsboard)
+#   TB_MQTT_PORT   → porta MQTT do ThingsBoard              (padrão: 1883)
+#   NODE_ID        → identificador do nó nos logs/relatórios (padrão: node-local)
+#   DEVICE_OFFSET  → índice de início no device_tokens.json  (padrão: 0)
+#   DEVICE_COUNT   → quantos devices este nó processa        (padrão: 333)
+#
+# Build:
+#   docker build -f Dockerfile.sensor -t fall-sensor-node .
+#
+# Execução manual (exemplo para o nó 2):
+#   docker run --rm \
+#     -e NODE_ID=node-2 \
+#     -e DEVICE_OFFSET=333 \
+#     -e DEVICE_COUNT=333 \
+#     -e TB_HOST=thingsboard \
+#     --network iot-cloud \
+#     -v $(pwd)/results:/app/results \
+#     fall-sensor-node
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Instala dependências numa camada separada para aproveitar o cache do Docker.
+# Se requirements.txt não mudar, esta camada não é reconstruída.
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copia apenas os arquivos necessários para rodar o load_test.
+# device_tokens.json é copiado para dentro da imagem; em produção pode ser
+# montado via volume se preferir tokens dinâmicos.
+COPY scripts/load_test.py scripts/
+COPY config/             config/
+COPY device_tokens.json  .
+
+# Variáveis padrão — todas podem ser sobrescritas no docker-compose ou via -e.
+ENV TB_HOST=thingsboard \
+    TB_MQTT_PORT=1883 \
+    NODE_ID=node-local \
+    DEVICE_OFFSET=0 \
+    DEVICE_COUNT=333
+
+# Shell form (não exec form) para que ${VAR} seja expandido em runtime.
+# Equivalente a rodar:
+#   python scripts/load_test.py --devices <DEVICE_COUNT> --offset <DEVICE_OFFSET>
+CMD python scripts/load_test.py \
+      --devices ${DEVICE_COUNT} \
+      --offset  ${DEVICE_OFFSET}
