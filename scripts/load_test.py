@@ -16,6 +16,16 @@ Uso:
     python scripts/load_test.py
     python scripts/load_test.py --devices 1000 --requests 100 --interval 100
     python scripts/load_test.py --devices 100000 --fall-prob 0.05
+
+Modo distribuído (múltiplos nós):
+    # Nó 0: devices 0-332
+    python scripts/load_test.py --devices 333 --offset 0
+    # Nó 1: devices 333-665
+    python scripts/load_test.py --devices 333 --offset 333
+    # Nó 2: devices 666-999
+    python scripts/load_test.py --devices 334 --offset 666
+
+    Variáveis de ambiente equivalentes: DEVICE_OFFSET, DEVICE_COUNT, NODE_ID
 """
 
 import argparse
@@ -55,6 +65,10 @@ console = Console()
 
 TB_HOST = os.getenv("TB_HOST", "localhost")
 TB_MQTT_PORT = int(os.getenv("TB_MQTT_PORT", "1883"))
+
+# Identificação do nó distribuído — usado nos logs e no nome do relatório.
+# Quando rodando via Docker, cada container recebe NODE_ID distinto (ex: "node-1").
+NODE_ID = os.getenv("NODE_ID", "local")
 
 
 # ---------------------------------------------------------------------------
@@ -347,7 +361,7 @@ async def metrics_loop(refresh_interval: float = 1.0) -> None:
 # Entrypoint
 # ---------------------------------------------------------------------------
 
-async def main(n_devices: int, n_requests: int, interval_ms: int) -> None:
+async def main(n_devices: int, n_requests: int, interval_ms: int, offset: int = 0) -> None:
     interval_s = interval_ms / 1000.0
     max_concurrent = CONFIG["load_test"]["max_concurrent_connects"]
     fall_mode = CONFIG["load_test"].get("fall_mode", "per_request")
@@ -363,24 +377,30 @@ async def main(n_devices: int, n_requests: int, interval_ms: int) -> None:
     with open(TOKENS_PATH) as f:
         all_tokens: dict = json.load(f)
 
-    valid = [
+    # Fatia de tokens que este nó é responsável.
+    # i é a posição global no dict, então i+1 é único em todo o cluster —
+    # garante que client identifiers MQTT não colidam entre nós.
+    all_valid = [
         (name, info["token"], i + 1)
         for i, (name, info) in enumerate(all_tokens.items())
         if info.get("token")
-    ][:n_devices]
+    ]
+    valid = all_valid[offset : offset + n_devices]
 
     if len(valid) < n_devices:
         console.print(
             f"[yellow]Atenção: apenas {len(valid):,} tokens disponíveis "
-            f"(solicitado: {n_devices:,})[/yellow]"
+            f"no intervalo [{offset}, {offset + n_devices}) "
+            f"(total no arquivo: {len(all_valid):,})[/yellow]"
         )
 
     total_msgs = len(valid) * n_requests
     test_duration_s = n_requests * interval_s
     expected_falls = int(len(valid) * fall_prob) if fall_mode == "session" else "variável"
 
-    console.rule("[bold cyan]Iniciando Load Test[/bold cyan]")
-    console.print(f"  Devices:          {len(valid):,}")
+    console.rule(f"[bold cyan]Iniciando Load Test — nó [{NODE_ID}][/bold cyan]")
+    console.print(f"  Nó (NODE_ID):     {NODE_ID}")
+    console.print(f"  Fatia devices:    [{offset} - {offset + len(valid) - 1}]  ({len(valid):,} devices)")
     console.print(f"  Requests/device:  {n_requests:,}")
     console.print(f"  Total msgs:       {total_msgs:,}")
     console.print(f"  Intervalo:        {interval_ms} ms")
@@ -410,6 +430,8 @@ async def main(n_devices: int, n_requests: int, interval_ms: int) -> None:
 
     m = METRICS
     report = {
+        "node_id": NODE_ID,
+        "device_offset": offset,
         "total_devices": len(valid),
         "requests_per_device": n_requests,
         "interval_ms": interval_ms,
@@ -429,7 +451,7 @@ async def main(n_devices: int, n_requests: int, interval_ms: int) -> None:
     }
 
     ts = int(time.time())
-    report_path = RESULTS_DIR / f"load_test_{ts}.json"
+    report_path = RESULTS_DIR / f"load_test_{NODE_ID}_{ts}.json"
     with open(report_path, "w") as f:
         json.dump(report, f, indent=2)
 
@@ -471,6 +493,16 @@ if __name__ == "__main__":
         default=None,
         help="Modo de queda: 'session' (1 queda por device) ou 'per_request' (por leitura)",
     )
+    parser.add_argument(
+        "--offset",
+        type=int,
+        default=int(os.getenv("DEVICE_OFFSET", "0")),
+        help=(
+            "Índice inicial no device_tokens.json (padrão: 0). "
+            "Permite que múltiplos nós processem fatias distintas do pool de devices. "
+            "Equivalente à variável de ambiente DEVICE_OFFSET."
+        ),
+    )
     args = parser.parse_args()
 
     if args.fall_prob is not None:
@@ -478,4 +510,4 @@ if __name__ == "__main__":
     if args.fall_mode is not None:
         CONFIG["load_test"]["fall_mode"] = args.fall_mode
 
-    asyncio.run(main(args.devices, args.requests, args.interval))
+    asyncio.run(main(args.devices, args.requests, args.interval, args.offset))
