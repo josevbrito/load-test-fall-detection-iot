@@ -120,6 +120,10 @@ services:
       DEVICE_COUNT: "334"
       TB_HOST: thingsboard   # DNS interno Docker — não "localhost"
       TB_MQTT_PORT: "1883"
+      # EXP_REQUESTS e EXP_INTERVAL_MS permitem que o run_experiments.sh
+      # ajuste a carga sem editar este arquivo. Ex: EXP_REQUESTS=50 docker compose up
+      REQUESTS: ${EXP_REQUESTS:-1000}
+      INTERVAL_MS: ${EXP_INTERVAL_MS:-100}
 
   sensor-node-2:
     <<: *sensor-common
@@ -130,6 +134,8 @@ services:
       DEVICE_COUNT: "333"
       TB_HOST: thingsboard
       TB_MQTT_PORT: "1883"
+      REQUESTS: ${EXP_REQUESTS:-1000}
+      INTERVAL_MS: ${EXP_INTERVAL_MS:-100}
 
   sensor-node-3:
     <<: *sensor-common
@@ -140,6 +146,8 @@ services:
       DEVICE_COUNT: "333"
       TB_HOST: thingsboard
       TB_MQTT_PORT: "1883"
+      REQUESTS: ${EXP_REQUESTS:-1000}
+      INTERVAL_MS: ${EXP_INTERVAL_MS:-100}
 
 # ---------------------------------------------------------------------------
 # Volumes nomeados (gerenciados pelo Docker, persistem entre restarts)

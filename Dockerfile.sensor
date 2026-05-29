@@ -45,11 +45,16 @@ ENV TB_HOST=thingsboard \
     TB_MQTT_PORT=1883 \
     NODE_ID=node-local \
     DEVICE_OFFSET=0 \
-    DEVICE_COUNT=333
+    DEVICE_COUNT=333 \
+    REQUESTS=1000 \
+    INTERVAL_MS=100
 
 # Shell form (não exec form) para que ${VAR} seja expandido em runtime.
 # Equivalente a rodar:
-#   python scripts/load_test.py --devices <DEVICE_COUNT> --offset <DEVICE_OFFSET>
+#   python scripts/load_test.py --devices <DEVICE_COUNT> --offset <DEVICE_OFFSET> \
+#                                --requests <REQUESTS> --interval <INTERVAL_MS>
 CMD python scripts/load_test.py \
-      --devices ${DEVICE_COUNT} \
-      --offset  ${DEVICE_OFFSET}
+      --devices  ${DEVICE_COUNT} \
+      --offset   ${DEVICE_OFFSET} \
+      --requests ${REQUESTS} \
+      --interval ${INTERVAL_MS}
