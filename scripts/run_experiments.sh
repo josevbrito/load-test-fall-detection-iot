@@ -135,7 +135,7 @@ exp_a() {
 
     EXP_REQUESTS=$REQUESTS EXP_INTERVAL_MS=$INTERVAL_MS \
     docker compose --profile sensors up \
-        --no-recreate \
+        --force-recreate \
         sensor-node-1 sensor-node-2 sensor-node-3
 
     N1=$(ls -t "$RESULTS_DIR"/load_test_node-1_*.json 2>/dev/null | head -1)
@@ -189,7 +189,7 @@ exp_b() {
     step "Iniciando 3 nós em background..."
     EXP_REQUESTS=$REQUESTS EXP_INTERVAL_MS=$INTERVAL_MS \
     docker compose --profile sensors up \
-        --no-recreate \
+        --force-recreate \
         sensor-node-1 sensor-node-2 sensor-node-3 &
     COMPOSE_PID=$!
 
@@ -242,7 +242,7 @@ exp_c() {
     step "Rodando 3 nós Docker com mesmos parâmetros do baseline..."
     EXP_REQUESTS=$REQUESTS EXP_INTERVAL_MS=$INTERVAL_MS \
     docker compose --profile sensors up \
-        --no-recreate \
+        --force-recreate \
         sensor-node-1 sensor-node-2 sensor-node-3
 
     N1=$(ls -t "$RESULTS_DIR"/load_test_node-1_*.json 2>/dev/null | head -1)
