@@ -1,0 +1,38 @@
+# monitoring/prometheus.yml
+# -------------------------
+# Configuração do Prometheus para o load test de IoT.
+#
+# Scrape targets:
+#   sensor-node-1/2/3  → métricas do load_test.py (porta 8001 em cada container)
+#
+# Acesso ao Prometheus: http://localhost:9090
+
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+
+  - job_name: "load-test-nodes"
+    # Raspa os 3 nós sensores distribuídos via rede Docker interna.
+    # Cada container expõe /metrics na porta 8001 (prometheus_client HTTP server).
+    static_configs:
+      - targets:
+          - "sensor-node-1:8001"
+          - "sensor-node-2:8001"
+          - "sensor-node-3:8001"
+    relabel_configs:
+      - source_labels: [__address__]
+        regex: "([^:]+):.*"
+        target_label: node
+        replacement: "$1"
+
+  - job_name: "load-test-local"
+    # Raspa o load test rodando diretamente no host (fora do Docker).
+    # host.docker.internal resolve para o IP do host a partir de dentro do container.
+    static_configs:
+      - targets:
+          - "host.docker.internal:8001"
+    relabel_configs:
+      - target_label: node
+        replacement: "local"

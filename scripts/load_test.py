@@ -16,6 +16,16 @@ Uso:
     python scripts/load_test.py
     python scripts/load_test.py --devices 1000 --requests 100 --interval 100
     python scripts/load_test.py --devices 100000 --fall-prob 0.05
+
+Modo distribuído (múltiplos nós):
+    # Nó 0: devices 0-332
+    python scripts/load_test.py --devices 333 --offset 0
+    # Nó 1: devices 333-665
+    python scripts/load_test.py --devices 333 --offset 333
+    # Nó 2: devices 666-999
+    python scripts/load_test.py --devices 334 --offset 666
+
+    Variáveis de ambiente equivalentes: DEVICE_OFFSET, DEVICE_COUNT, NODE_ID
 """
 
 import argparse
@@ -35,6 +45,7 @@ import aiomqtt
 import numpy as np
 import yaml
 from dotenv import load_dotenv
+from prometheus_client import Counter, Gauge, start_http_server
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
@@ -55,6 +66,74 @@ console = Console()
 
 TB_HOST = os.getenv("TB_HOST", "localhost")
 TB_MQTT_PORT = int(os.getenv("TB_MQTT_PORT", "1883"))
+
+# Identificação do nó distribuído — usado nos logs e no nome do relatório.
+# Quando rodando via Docker, cada container recebe NODE_ID distinto (ex: "node-1").
+NODE_ID = os.getenv("NODE_ID", "local")
+
+# Porta do servidor HTTP do Prometheus (/metrics).
+# Cada container usa a mesma porta pois rodam em namespaces de rede isolados.
+METRICS_PORT = int(os.getenv("METRICS_PORT", "8001"))
+
+# ---------------------------------------------------------------------------
+# Métricas Prometheus
+# ---------------------------------------------------------------------------
+
+_prom_throughput = Gauge(
+    "load_test_throughput_msg_per_second", "Throughput atual (msg/s)", ["node"]
+)
+_prom_latency_avg = Gauge(
+    "load_test_latency_avg_ms", "Latência média (ms)", ["node"]
+)
+_prom_latency_p99 = Gauge(
+    "load_test_latency_p99_ms", "Latência p99 (ms)", ["node"]
+)
+_prom_active_devices = Gauge(
+    "load_test_active_devices", "Devices com coroutine ativa", ["node"]
+)
+_prom_connected_devices = Gauge(
+    "load_test_connected_devices", "Total de devices que já conectaram", ["node"]
+)
+_prom_messages = Counter(
+    "load_test_messages_total", "Total de mensagens publicadas", ["node"]
+)
+_prom_errors = Counter(
+    "load_test_errors_total", "Total de erros de publicação", ["node"]
+)
+_prom_falls = Counter(
+    "load_test_falls_total", "Total de quedas simuladas", ["node"]
+)
+
+# Estado anterior para calcular delta nos Counters
+_prom_prev = {"published": 0, "errors": 0, "falls": 0}
+
+
+def _update_prometheus_metrics() -> None:
+    """Sincroniza os objetos Prometheus com o estado atual de METRICS."""
+    m = METRICS
+    n = NODE_ID
+
+    _prom_throughput.labels(n).set(m.throughput)
+    _prom_latency_avg.labels(n).set(m.avg_latency_ms)
+    _prom_latency_p99.labels(n).set(m.p99_latency_ms)
+    _prom_active_devices.labels(n).set(m.active_devices)
+    _prom_connected_devices.labels(n).set(m.connected_devices)
+
+    # Counters só aceitam incremento — calculamos o delta desde a última chamada.
+    delta_pub = m.total_published - _prom_prev["published"]
+    if delta_pub > 0:
+        _prom_messages.labels(n).inc(delta_pub)
+        _prom_prev["published"] = m.total_published
+
+    delta_err = m.total_errors - _prom_prev["errors"]
+    if delta_err > 0:
+        _prom_errors.labels(n).inc(delta_err)
+        _prom_prev["errors"] = m.total_errors
+
+    delta_falls = m.total_falls - _prom_prev["falls"]
+    if delta_falls > 0:
+        _prom_falls.labels(n).inc(delta_falls)
+        _prom_prev["falls"] = m.total_falls
 
 
 # ---------------------------------------------------------------------------
@@ -340,6 +419,7 @@ async def metrics_loop(refresh_interval: float = 1.0) -> None:
     with Live(build_dashboard(), refresh_per_second=1, console=console) as live:
         while METRICS.active_devices > 0 or METRICS.connected_devices == 0:
             await asyncio.sleep(refresh_interval)
+            _update_prometheus_metrics()
             live.update(build_dashboard())
 
 
@@ -347,7 +427,7 @@ async def metrics_loop(refresh_interval: float = 1.0) -> None:
 # Entrypoint
 # ---------------------------------------------------------------------------
 
-async def main(n_devices: int, n_requests: int, interval_ms: int) -> None:
+async def main(n_devices: int, n_requests: int, interval_ms: int, offset: int = 0) -> None:
     interval_s = interval_ms / 1000.0
     max_concurrent = CONFIG["load_test"]["max_concurrent_connects"]
     fall_mode = CONFIG["load_test"].get("fall_mode", "per_request")
@@ -363,24 +443,34 @@ async def main(n_devices: int, n_requests: int, interval_ms: int) -> None:
     with open(TOKENS_PATH) as f:
         all_tokens: dict = json.load(f)
 
-    valid = [
+    # Fatia de tokens que este nó é responsável.
+    # i é a posição global no dict, então i+1 é único em todo o cluster —
+    # garante que client identifiers MQTT não colidam entre nós.
+    all_valid = [
         (name, info["token"], i + 1)
         for i, (name, info) in enumerate(all_tokens.items())
         if info.get("token")
-    ][:n_devices]
+    ]
+    valid = all_valid[offset : offset + n_devices]
 
     if len(valid) < n_devices:
         console.print(
             f"[yellow]Atenção: apenas {len(valid):,} tokens disponíveis "
-            f"(solicitado: {n_devices:,})[/yellow]"
+            f"no intervalo [{offset}, {offset + n_devices}) "
+            f"(total no arquivo: {len(all_valid):,})[/yellow]"
         )
 
     total_msgs = len(valid) * n_requests
     test_duration_s = n_requests * interval_s
     expected_falls = int(len(valid) * fall_prob) if fall_mode == "session" else "variável"
 
-    console.rule("[bold cyan]Iniciando Load Test[/bold cyan]")
-    console.print(f"  Devices:          {len(valid):,}")
+    # Inicia o servidor HTTP do Prometheus em daemon thread (não bloqueia o event loop).
+    # O Prometheus raspa http://<container>:METRICS_PORT/metrics a cada 5s.
+    start_http_server(METRICS_PORT)
+
+    console.rule(f"[bold cyan]Iniciando Load Test — nó [{NODE_ID}][/bold cyan]")
+    console.print(f"  Nó (NODE_ID):     {NODE_ID}")
+    console.print(f"  Fatia devices:    [{offset} - {offset + len(valid) - 1}]  ({len(valid):,} devices)")
     console.print(f"  Requests/device:  {n_requests:,}")
     console.print(f"  Total msgs:       {total_msgs:,}")
     console.print(f"  Intervalo:        {interval_ms} ms")
@@ -410,6 +500,8 @@ async def main(n_devices: int, n_requests: int, interval_ms: int) -> None:
 
     m = METRICS
     report = {
+        "node_id": NODE_ID,
+        "device_offset": offset,
         "total_devices": len(valid),
         "requests_per_device": n_requests,
         "interval_ms": interval_ms,
@@ -429,7 +521,7 @@ async def main(n_devices: int, n_requests: int, interval_ms: int) -> None:
     }
 
     ts = int(time.time())
-    report_path = RESULTS_DIR / f"load_test_{ts}.json"
+    report_path = RESULTS_DIR / f"load_test_{NODE_ID}_{ts}.json"
     with open(report_path, "w") as f:
         json.dump(report, f, indent=2)
 
@@ -471,6 +563,16 @@ if __name__ == "__main__":
         default=None,
         help="Modo de queda: 'session' (1 queda por device) ou 'per_request' (por leitura)",
     )
+    parser.add_argument(
+        "--offset",
+        type=int,
+        default=int(os.getenv("DEVICE_OFFSET", "0")),
+        help=(
+            "Índice inicial no device_tokens.json (padrão: 0). "
+            "Permite que múltiplos nós processem fatias distintas do pool de devices. "
+            "Equivalente à variável de ambiente DEVICE_OFFSET."
+        ),
+    )
     args = parser.parse_args()
 
     if args.fall_prob is not None:
@@ -478,4 +580,4 @@ if __name__ == "__main__":
     if args.fall_mode is not None:
         CONFIG["load_test"]["fall_mode"] = args.fall_mode
 
-    asyncio.run(main(args.devices, args.requests, args.interval))
+    asyncio.run(main(args.devices, args.requests, args.interval, args.offset))
