@@ -45,6 +45,7 @@ import aiomqtt
 import numpy as np
 import yaml
 from dotenv import load_dotenv
+from prometheus_client import Counter, Gauge, start_http_server
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
@@ -69,6 +70,70 @@ TB_MQTT_PORT = int(os.getenv("TB_MQTT_PORT", "1883"))
 # Identificação do nó distribuído — usado nos logs e no nome do relatório.
 # Quando rodando via Docker, cada container recebe NODE_ID distinto (ex: "node-1").
 NODE_ID = os.getenv("NODE_ID", "local")
+
+# Porta do servidor HTTP do Prometheus (/metrics).
+# Cada container usa a mesma porta pois rodam em namespaces de rede isolados.
+METRICS_PORT = int(os.getenv("METRICS_PORT", "8001"))
+
+# ---------------------------------------------------------------------------
+# Métricas Prometheus
+# ---------------------------------------------------------------------------
+
+_prom_throughput = Gauge(
+    "load_test_throughput_msg_per_second", "Throughput atual (msg/s)", ["node"]
+)
+_prom_latency_avg = Gauge(
+    "load_test_latency_avg_ms", "Latência média (ms)", ["node"]
+)
+_prom_latency_p99 = Gauge(
+    "load_test_latency_p99_ms", "Latência p99 (ms)", ["node"]
+)
+_prom_active_devices = Gauge(
+    "load_test_active_devices", "Devices com coroutine ativa", ["node"]
+)
+_prom_connected_devices = Gauge(
+    "load_test_connected_devices", "Total de devices que já conectaram", ["node"]
+)
+_prom_messages = Counter(
+    "load_test_messages_total", "Total de mensagens publicadas", ["node"]
+)
+_prom_errors = Counter(
+    "load_test_errors_total", "Total de erros de publicação", ["node"]
+)
+_prom_falls = Counter(
+    "load_test_falls_total", "Total de quedas simuladas", ["node"]
+)
+
+# Estado anterior para calcular delta nos Counters
+_prom_prev = {"published": 0, "errors": 0, "falls": 0}
+
+
+def _update_prometheus_metrics() -> None:
+    """Sincroniza os objetos Prometheus com o estado atual de METRICS."""
+    m = METRICS
+    n = NODE_ID
+
+    _prom_throughput.labels(n).set(m.throughput)
+    _prom_latency_avg.labels(n).set(m.avg_latency_ms)
+    _prom_latency_p99.labels(n).set(m.p99_latency_ms)
+    _prom_active_devices.labels(n).set(m.active_devices)
+    _prom_connected_devices.labels(n).set(m.connected_devices)
+
+    # Counters só aceitam incremento — calculamos o delta desde a última chamada.
+    delta_pub = m.total_published - _prom_prev["published"]
+    if delta_pub > 0:
+        _prom_messages.labels(n).inc(delta_pub)
+        _prom_prev["published"] = m.total_published
+
+    delta_err = m.total_errors - _prom_prev["errors"]
+    if delta_err > 0:
+        _prom_errors.labels(n).inc(delta_err)
+        _prom_prev["errors"] = m.total_errors
+
+    delta_falls = m.total_falls - _prom_prev["falls"]
+    if delta_falls > 0:
+        _prom_falls.labels(n).inc(delta_falls)
+        _prom_prev["falls"] = m.total_falls
 
 
 # ---------------------------------------------------------------------------
@@ -354,6 +419,7 @@ async def metrics_loop(refresh_interval: float = 1.0) -> None:
     with Live(build_dashboard(), refresh_per_second=1, console=console) as live:
         while METRICS.active_devices > 0 or METRICS.connected_devices == 0:
             await asyncio.sleep(refresh_interval)
+            _update_prometheus_metrics()
             live.update(build_dashboard())
 
 
@@ -397,6 +463,10 @@ async def main(n_devices: int, n_requests: int, interval_ms: int, offset: int = 
     total_msgs = len(valid) * n_requests
     test_duration_s = n_requests * interval_s
     expected_falls = int(len(valid) * fall_prob) if fall_mode == "session" else "variável"
+
+    # Inicia o servidor HTTP do Prometheus em daemon thread (não bloqueia o event loop).
+    # O Prometheus raspa http://<container>:METRICS_PORT/metrics a cada 5s.
+    start_http_server(METRICS_PORT)
 
     console.rule(f"[bold cyan]Iniciando Load Test — nó [{NODE_ID}][/bold cyan]")
     console.print(f"  Nó (NODE_ID):     {NODE_ID}")

@@ -1,0 +1,14 @@
+# Provisionamento automático dos dashboards no Grafana.
+# Aponta para o diretório onde os arquivos JSON dos dashboards estão montados.
+
+apiVersion: 1
+
+providers:
+  - name: "Fall Detection IoT"
+    orgId: 1
+    folder: "Load Test"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
