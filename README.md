@@ -31,6 +31,7 @@ Python asyncio (N coroutines)
 │                                                                               │
 │  sensor-node-1          sensor-node-2          sensor-node-3                 │
 │  devices [0–333]        devices [334–666]       devices [667–999]            │
+│  tc netem (delay/jitter/loss)                                                │
 │  IP próprio             IP próprio              IP próprio                    │
 │       │                      │                       │                       │
 │       └──────────────────────┼───────────────────────┘                       │
@@ -85,7 +86,7 @@ docker compose logs -f thingsboard
 python scripts/provision_devices.py
 ```
 
-Cria os devices no ThingsBoard via REST API e salva os tokens em
+Cria 1000 devices no ThingsBoard via REST API e salva os tokens em
 `device_tokens.json`. Idempotente — pode ser re-executado com segurança.
 
 ### 3. Criar dashboard
@@ -101,17 +102,51 @@ Acesse: **http://localhost:8090**
 ### 4. Rodar o load test
 
 ```bash
-# Padrão (valores do config.yaml)
+# Padrão (valores do config.yaml — QoS 1, persistent session)
 python scripts/load_test.py
 
 # Customizado
 python scripts/load_test.py --devices 1000 --requests 100 --interval 100
+
+# Com QoS 0 (fire-and-forget, sem PUBACK)
+MQTT_QOS=0 python scripts/load_test.py
 
 # Nó parcial (ex: processar só os devices 0–499)
 python scripts/load_test.py --devices 500 --offset 0
 ```
 
 O relatório JSON é salvo em `results/load_test_<NODE_ID>_<timestamp>.json`.
+
+---
+
+## Garantia de Entrega MQTT
+
+O load test suporta dois níveis de QoS, configuráveis via variável de ambiente `MQTT_QOS`:
+
+| QoS | Nome | Comportamento |
+|---|---|---|
+| 0 | Fire-and-forget | Envia e não espera confirmação. Mais rápido, mas mensagens podem se perder se o broker cair. |
+| 1 | At-least-once | Espera o PUBACK do broker antes de prosseguir. Garante recebimento, ao custo de latência maior (round-trip). |
+
+Além do QoS, o load test usa **persistent session** (`clean_session=False`):
+o broker preserva a fila de mensagens pendentes entre reconexões. Se um device
+desconectar e reconectar com o mesmo `client_id`, mensagens QoS 1 não confirmadas
+são reenviadas automaticamente.
+
+Cada device usa um `client_id` fixo e determinístico (`sim-000001`, `sim-000002`, ...),
+garantindo que a sessão persistente funcione corretamente. Em caso de desconexão,
+o load test faz até 3 tentativas de reconexão com backoff exponencial (2s, 4s, 8s).
+
+```bash
+# QoS 1 (padrão — at-least-once)
+python scripts/load_test.py
+
+# QoS 0 (fire-and-forget, para comparação)
+MQTT_QOS=0 python scripts/load_test.py
+
+# No modo distribuído
+MQTT_QOS=0 docker compose --profile sensors up
+```
 
 ---
 
@@ -144,16 +179,55 @@ Os 3 containers rodam simultaneamente, cada um publicando sua fatia:
 
 ### 3. Customizar parâmetros sem editar arquivos
 
-As variáveis `EXP_REQUESTS` e `EXP_INTERVAL_MS` propagam para todos os nós:
+As variáveis de ambiente propagam para todos os nós:
 
 ```bash
+# Ajustar carga
 EXP_REQUESTS=50 EXP_INTERVAL_MS=200 \
   docker compose --profile sensors up sensor-node-1 sensor-node-2 sensor-node-3
+
+# Ajustar QoS
+MQTT_QOS=0 docker compose --profile sensors up
 ```
 
 ---
 
-## Experimentos de Sistemas Distribuídos
+## Simulação de Rede (tc netem)
+
+Os nós sensores suportam simulação de latência, jitter e perda de pacotes
+usando `tc netem` na interface `eth0` de cada container. Controlado por
+variáveis de ambiente:
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `NET_DELAY` | `0ms` | Latência base adicionada a cada pacote |
+| `NET_JITTER` | `0ms` | Variação aleatória da latência (+-) |
+| `NET_LOSS` | `0%` | Percentual de pacotes descartados |
+
+Quando `NET_DELAY=0ms` (padrão), nenhuma regra netem é aplicada — a rede
+funciona normalmente sem overhead.
+
+```bash
+# Rede limpa (padrão)
+docker compose --profile sensors up
+
+# Rede Wi-Fi razoável (100ms +-20ms, 1% perda)
+NET_DELAY=100ms NET_JITTER=20ms NET_LOSS=1% \
+  docker compose --profile sensors up
+
+# Rede ruim / 4G instável (300ms +-50ms, 5% perda)
+NET_DELAY=300ms NET_JITTER=50ms NET_LOSS=5% \
+  docker compose --profile sensors up
+```
+
+Os containers precisam da capability `NET_ADMIN` (já configurada no `docker-compose.yml`)
+para manipular a interface de rede via `tc`.
+
+---
+
+## Experimentos
+
+### Experimentos de Sistemas Distribuídos (A, B, C)
 
 O script `run_experiments.sh` orquestra três experimentos automaticamente.
 
@@ -174,7 +248,7 @@ bash scripts/run_experiments.sh all
 REQUESTS=50 INTERVAL_MS=100 bash scripts/run_experiments.sh A
 ```
 
-### Experimento A — Escalabilidade Horizontal
+#### Experimento A — Escalabilidade Horizontal
 
 Roda o mesmo total de devices em duas configurações e compara:
 
@@ -183,10 +257,10 @@ A1: 1 container  →  1000 devices num único processo Python
 A3: 3 containers →  334 + 333 + 333 devices em paralelo
 ```
 
-**O que observar:** throughput do cluster A3 deve ser próximo de 3× o de A1.
+**O que observar:** throughput do cluster A3 deve ser próximo de 3x o de A1.
 Latência deve permanecer similar — a distribuição não adiciona overhead significativo.
 
-### Experimento B — Tolerância a Falhas
+#### Experimento B — Tolerância a Falhas
 
 Sobe 3 nós, aguarda 20s e mata `sensor-node-2` com `docker stop`.
 
@@ -194,12 +268,49 @@ Sobe 3 nós, aguarda 20s e mata `sensor-node-2` com `docker stop`.
 Nós 1 e 3 completam normalmente — **isolamento de falha**. Em produção,
 um load balancer redistribuiria os devices do nó perdido.
 
-### Experimento C — Local vs Docker
+#### Experimento C — Local vs Docker
 
 Compara a execução asyncio direta no host com o cluster de containers.
 
 **O que observar:** overhead da rede bridge Docker é tipicamente < 5ms.
 Cada container tem seu próprio event loop asyncio — melhor isolamento de CPU.
+
+### Experimento de Cenários de Rede
+
+O script `run_network_scenarios.sh` executa o load test em 3 condições de rede
+diferentes, em sequência, com pausa de 30s entre cada cenário (para criar
+intervalos visíveis no Grafana).
+
+```bash
+# Subir infraestrutura + monitoramento primeiro
+docker compose up thingsboard postgres prometheus grafana -d
+
+# Rodar os 3 cenários automaticamente
+bash scripts/run_network_scenarios.sh
+```
+
+| Cenário | Delay | Jitter | Perda | Simula |
+|---|---|---|---|---|
+| `boa` | 20ms | +-5ms | 0% | Rede local / fibra |
+| `media` | 100ms | +-20ms | 1% | Wi-Fi razoável |
+| `ruim` | 300ms | +-50ms | 5% | 4G instável |
+
+Todos os cenários usam `EXP_REQUESTS=100` (carga reduzida para execução rápida).
+
+**Fluxo do script:**
+1. Exporta as variáveis `NET_DELAY`, `NET_JITTER`, `NET_LOSS` do cenário
+2. Sobe os 3 nós sensores com `--abort-on-container-exit`
+3. Aguarda o teste terminar
+4. Move os JSONs para `results/cenario_<nome>/`
+5. Derruba os nós sensores
+6. Pausa 30s (exceto após o último)
+7. Imprime resumo com horários de início/fim de cada cenário
+
+**O que observar:**
+- Cenário `boa`: latência e throughput similares à rede limpa
+- Cenário `media`: latência média sobe ~100ms, throughput cai levemente
+- Cenário `ruim`: latência alta (~300ms+), perda de 5% gera erros e retransmissões (QoS 1)
+- Com QoS 1, mensagens perdidas são retransmitidas; com QoS 0, são perdidas definitivamente
 
 ---
 
@@ -265,6 +376,20 @@ load_test:
   max_concurrent_connects: 5000
 ```
 
+### Variáveis de ambiente
+
+| Variável | Default | Descrição |
+|---|---|---|
+| `MQTT_QOS` | `1` | QoS MQTT: 0 (fire-and-forget) ou 1 (at-least-once) |
+| `EXP_REQUESTS` | `1000` | Requests por device (modo distribuído) |
+| `EXP_INTERVAL_MS` | `100` | Intervalo entre publicações em ms |
+| `NET_DELAY` | `0ms` | Latência netem na eth0 do container |
+| `NET_JITTER` | `0ms` | Jitter netem |
+| `NET_LOSS` | `0%` | Perda de pacotes netem |
+| `NODE_ID` | `local` | Identificador do nó nos relatórios |
+| `DEVICE_OFFSET` | `0` | Índice inicial no device_tokens.json |
+| `DEVICE_COUNT` | `333` | Quantos devices o nó processa |
+
 ---
 
 ## Estrutura
@@ -272,23 +397,33 @@ load_test:
 ```
 load-test-fall-detection-iot/
 ├── docker-compose.yml          # ThingsBoard + Postgres + 3 sensor-nodes
-├── Dockerfile.sensor           # Imagem do nó sensor distribuído
+├── Dockerfile.sensor           # Imagem do nó sensor (inclui iproute2 para tc netem)
+├── entrypoint.sh               # Aplica regras tc netem antes do load test
 ├── .env                        # Credenciais (não commitado)
 ├── requirements.txt
 ├── config/
 │   └── load_test_config.yaml
 ├── scripts/
 │   ├── provision_devices.py    # Cria devices via REST API
-│   ├── load_test.py            # Motor MQTT (asyncio + --offset para particionamento)
+│   ├── load_test.py            # Motor MQTT (asyncio + QoS configurável + persistent session)
 │   ├── compare_results.py      # Agrega e compara relatórios de múltiplos nós
 │   ├── run_experiments.sh      # Orquestra experimentos A, B e C
+│   ├── run_network_scenarios.sh # Executa load test em 3 cenários de rede (boa/media/ruim)
 │   ├── dashboard_setup.py      # Cria dashboard com widgets
 │   └── cleanup.py              # Remove devices de teste
+├── monitoring/
+│   ├── prometheus.yml
+│   └── grafana/
+│       ├── provisioning/
+│       └── dashboards/
 ├── dashboard/
 │   └── fall_detection_dashboard.json
 └── results/
     ├── load_test_<node-id>_<timestamp>.json   # Relatório por nó
-    └── cluster_<timestamp>.json               # Relatório agregado do cluster
+    ├── cluster_<timestamp>.json               # Relatório agregado do cluster
+    ├── cenario_boa/                           # Resultados do cenário de rede boa
+    ├── cenario_media/                         # Resultados do cenário de rede média
+    └── cenario_ruim/                          # Resultados do cenário de rede ruim
 ```
 
 ---
