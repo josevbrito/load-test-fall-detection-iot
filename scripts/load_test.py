@@ -81,6 +81,15 @@ METRICS_PORT = int(os.getenv("METRICS_PORT", "8001"))
 # maior (round-trip até o PUBACK) e possível duplicação em caso de retransmissão.
 MQTT_QOS = int(os.getenv("MQTT_QOS", "1"))
 
+# Sessão limpa (clean_session):
+#   True  → cada conexão começa do zero, sem estado residual no broker.
+#           Recomendado para load tests (evita acúmulo de sessões persistentes).
+#   False → o broker preserva a sessão entre reconexões (subscriptions e
+#           mensagens QoS 1/2 pendentes). Útil para dispositivos IoT reais
+#           que precisam retomar após queda de rede, mas pode causar problemas
+#           em load tests repetidos (acúmulo de estado no broker).
+MQTT_CLEAN_SESSION = os.getenv("MQTT_CLEAN_SESSION", "true").lower() in ("true", "1", "yes")
+
 # ---------------------------------------------------------------------------
 # Métricas Prometheus
 # ---------------------------------------------------------------------------
@@ -350,11 +359,7 @@ async def run_device(
                     password="",
                     identifier=client_id,
                     keepalive=60,
-                    # clean_session=False: o broker preserva a sessão (subscriptions e
-                    # mensagens QoS 1/2 pendentes) entre reconexões. Se o cliente cair
-                    # e reconectar com o mesmo client_id, mensagens que o broker não
-                    # conseguiu confirmar (PUBACK) são reenviadas automaticamente.
-                    clean_session=False,
+                    clean_session=MQTT_CLEAN_SESSION,
                 ) as client:
                     if attempt == 0:
                         METRICS.connected_devices += 1
@@ -511,7 +516,7 @@ async def main(n_devices: int, n_requests: int, interval_ms: int, offset: int = 
     console.print(f"  Quedas esperadas: ~{expected_falls}")
     console.print(f"  Concorrência max: {max_concurrent:,}")
     console.print(f"  MQTT QoS:         {MQTT_QOS}  ({'at-least-once + PUBACK' if MQTT_QOS == 1 else 'fire-and-forget'})")
-    console.print(f"  Clean session:    False  (persistent session)")
+    console.print(f"  Clean session:    {MQTT_CLEAN_SESSION}  ({'sessão limpa' if MQTT_CLEAN_SESSION else 'persistent session'})")
     console.print(f"  ThingsBoard:      {TB_HOST}:{TB_MQTT_PORT}")
     console.print()
 

@@ -181,6 +181,8 @@ services:
       INTERVAL_MS: ${EXP_INTERVAL_MS:-100}
       # MQTT QoS: 0 = fire-and-forget, 1 = at-least-once (com PUBACK).
       MQTT_QOS: ${MQTT_QOS:-1}
+      # Clean session: true = sem estado residual no broker (recomendado para load test).
+      MQTT_CLEAN_SESSION: ${MQTT_CLEAN_SESSION:-true}
       # Simulação de rede (tc netem). Defaults: sem simulação.
       # Override via shell: NET_DELAY=100ms NET_JITTER=20ms NET_LOSS=1% docker compose ...
       NET_DELAY: ${NET_DELAY:-0ms}
@@ -200,6 +202,7 @@ services:
       REQUESTS: ${EXP_REQUESTS:-1000}
       INTERVAL_MS: ${EXP_INTERVAL_MS:-100}
       MQTT_QOS: ${MQTT_QOS:-1}
+      MQTT_CLEAN_SESSION: ${MQTT_CLEAN_SESSION:-true}
       NET_DELAY: ${NET_DELAY:-0ms}
       NET_JITTER: ${NET_JITTER:-0ms}
       NET_LOSS: ${NET_LOSS:-0%}
@@ -217,6 +220,7 @@ services:
       REQUESTS: ${EXP_REQUESTS:-1000}
       INTERVAL_MS: ${EXP_INTERVAL_MS:-100}
       MQTT_QOS: ${MQTT_QOS:-1}
+      MQTT_CLEAN_SESSION: ${MQTT_CLEAN_SESSION:-true}
       NET_DELAY: ${NET_DELAY:-0ms}
       NET_JITTER: ${NET_JITTER:-0ms}
       NET_LOSS: ${NET_LOSS:-0%}
