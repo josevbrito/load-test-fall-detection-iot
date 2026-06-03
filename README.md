@@ -96,8 +96,14 @@ python scripts/dashboard_setup.py
 ```
 
 Acesse: **http://localhost:8090**
-- Email: `tenant@thingsboard.org`
-- Senha: `tenant2026`
+
+> **Importante:** o login direto com as credenciais do tenant não funciona.
+> É necessário primeiro logar como **System Administrator** e depois entrar
+> como locatário do tenant:
+>
+> 1. Login como sysadmin: `sysadmin@thingsboard.org` / `sysadmin`
+> 2. No menu lateral, acesse **Tenants** → selecione o tenant → clique em
+>    **Login as Tenant Administrator** (ícone de login ao lado do tenant)
 
 ### 4. Rodar o load test
 
