@@ -28,6 +28,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# iproute2 fornece o comando "tc" (traffic control), usado para simular
+# latência, jitter e perda de pacotes na interface de rede do container
+# via tc netem. Necessário para os experimentos de rede distribuída.
+RUN apt-get update && apt-get install -y --no-install-recommends iproute2 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Instala dependências numa camada separada para aproveitar o cache do Docker.
 # Se requirements.txt não mudar, esta camada não é reconstruída.
 COPY requirements.txt .
@@ -49,10 +55,22 @@ ENV TB_HOST=thingsboard \
     REQUESTS=1000 \
     INTERVAL_MS=100
 
-# Shell form (não exec form) para que ${VAR} seja expandido em runtime.
-# Equivalente a rodar:
-#   python scripts/load_test.py --devices <DEVICE_COUNT> --offset <DEVICE_OFFSET> \
-#                                --requests <REQUESTS> --interval <INTERVAL_MS>
+# Variáveis de simulação de rede (tc netem).
+# NET_DELAY=0ms desativa a simulação completamente.
+ENV NET_DELAY=0ms \
+    NET_JITTER=0ms \
+    NET_LOSS=0%
+
+# Entrypoint: aplica regras tc netem (se NET_DELAY > 0) e depois executa o CMD.
+# - tc qdisc add ... netem: adiciona disciplina de fila com emulação de rede
+#   - delay X Y: adiciona latência X ±Y (distribuição uniforme)
+#   - loss Z: descarta Z% dos pacotes aleatoriamente
+# - Se NET_DELAY=0ms, pula a configuração (rede limpa, sem overhead)
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# Shell form para que ${VAR} seja expandido em runtime.
 CMD python scripts/load_test.py \
       --devices  ${DEVICE_COUNT} \
       --offset   ${DEVICE_OFFSET} \
