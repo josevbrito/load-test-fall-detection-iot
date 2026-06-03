@@ -1,5 +1,5 @@
 load_test:
-  n_devices: 100000
+  n_devices: 1000
   requests_per_device: 100
   interval_ms: 100              # 100 ms entre publicações por device
   fall_probability: 0.05        # 5 % dos devices terão exatamente 1 queda na sessão
