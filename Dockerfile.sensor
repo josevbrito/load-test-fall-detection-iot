@@ -53,7 +53,8 @@ ENV TB_HOST=thingsboard \
     DEVICE_OFFSET=0 \
     DEVICE_COUNT=333 \
     REQUESTS=1000 \
-    INTERVAL_MS=100
+    INTERVAL_MS=100 \
+    MQTT_QOS=1
 
 # Variáveis de simulação de rede (tc netem).
 # NET_DELAY=0ms desativa a simulação completamente.

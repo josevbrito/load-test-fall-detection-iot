@@ -75,6 +75,12 @@ NODE_ID = os.getenv("NODE_ID", "local")
 # Cada container usa a mesma porta pois rodam em namespaces de rede isolados.
 METRICS_PORT = int(os.getenv("METRICS_PORT", "8001"))
 
+# QoS MQTT: 0 = fire-and-forget (sem confirmação do broker),
+#           1 = at-least-once (broker envia PUBACK confirmando recebimento).
+# QoS 1 garante que a mensagem foi recebida pelo broker, ao custo de latência
+# maior (round-trip até o PUBACK) e possível duplicação em caso de retransmissão.
+MQTT_QOS = int(os.getenv("MQTT_QOS", "1"))
+
 # ---------------------------------------------------------------------------
 # Métricas Prometheus
 # ---------------------------------------------------------------------------
@@ -326,50 +332,76 @@ async def run_device(
     if fall_mode == "session":
         fall_at_request = _schedule_session_fall(n_requests)
 
+    # client_id fixo e determinístico: garante que persistent sessions (clean_session=False)
+    # retomem o estado correto após reconexão. O broker associa a fila de mensagens
+    # pendentes ao client_id — se fosse aleatório, cada reconexão criaria uma sessão nova.
+    client_id = f"sim-{device_index:06d}"
+
+    # Número máximo de tentativas de reconexão antes de desistir do device.
+    max_reconnect_attempts = 3
+
     async with semaphore:
-        try:
-            async with aiomqtt.Client(
-                hostname=TB_HOST,
-                port=TB_MQTT_PORT,
-                username=token,
-                password="",
-                identifier=f"sim-{device_index:06d}",
-                keepalive=60,
-            ) as client:
-                METRICS.connected_devices += 1
-                METRICS.active_devices += 1
+        for attempt in range(max_reconnect_attempts):
+            try:
+                async with aiomqtt.Client(
+                    hostname=TB_HOST,
+                    port=TB_MQTT_PORT,
+                    username=token,
+                    password="",
+                    identifier=client_id,
+                    keepalive=60,
+                    # clean_session=False: o broker preserva a sessão (subscriptions e
+                    # mensagens QoS 1/2 pendentes) entre reconexões. Se o cliente cair
+                    # e reconectar com o mesmo client_id, mensagens que o broker não
+                    # conseguiu confirmar (PUBACK) são reenviadas automaticamente.
+                    clean_session=False,
+                ) as client:
+                    if attempt == 0:
+                        METRICS.connected_devices += 1
+                    METRICS.active_devices += 1
 
-                for req_num in range(n_requests):
-                    if fall_mode == "session":
-                        force_fall = (req_num == fall_at_request)
-                    else:
-                        force_fall = random.random() < fall_prob
+                    for req_num in range(n_requests):
+                        if fall_mode == "session":
+                            force_fall = (req_num == fall_at_request)
+                        else:
+                            force_fall = random.random() < fall_prob
 
-                    payload = sensor.read(force_fall=force_fall)
+                        payload = sensor.read(force_fall=force_fall)
 
-                    if payload["fall_detected"]:
-                        METRICS.total_falls += 1
+                        if payload["fall_detected"]:
+                            METRICS.total_falls += 1
 
-                    t0 = time.monotonic()
-                    try:
-                        await client.publish(
-                            "v1/devices/me/telemetry",
-                            json.dumps(payload),
-                            qos=0,
-                        )
-                        METRICS.latencies_ms.append((time.monotonic() - t0) * 1000)
-                        METRICS.total_published += 1
-                    except Exception:
-                        METRICS.total_errors += 1
+                        # A medição de latência captura o round-trip completo:
+                        #   QoS 0: tempo até o pacote ser entregue ao socket (rápido)
+                        #   QoS 1: tempo até receber o PUBACK do broker (inclui RTT)
+                        # Isso torna a comparação QoS 0 vs 1 diretamente visível nas métricas.
+                        t0 = time.monotonic()
+                        try:
+                            await client.publish(
+                                "v1/devices/me/telemetry",
+                                json.dumps(payload),
+                                qos=MQTT_QOS,
+                            )
+                            METRICS.latencies_ms.append((time.monotonic() - t0) * 1000)
+                            METRICS.total_published += 1
+                        except Exception:
+                            METRICS.total_errors += 1
 
-                    await asyncio.sleep(interval_s)
+                        await asyncio.sleep(interval_s)
 
-                METRICS.active_devices -= 1
+                    METRICS.active_devices -= 1
+                    # Publicação completa — sai do loop de reconexão.
+                    break
 
-        except Exception:
-            METRICS.total_errors += 1
-            if METRICS.active_devices > 0:
-                METRICS.active_devices -= 1
+            except Exception:
+                METRICS.total_errors += 1
+                if METRICS.active_devices > 0:
+                    METRICS.active_devices -= 1
+                # Backoff exponencial: 2s, 4s, 8s entre tentativas de reconexão.
+                # Usa o mesmo client_id para retomar a persistent session no broker.
+                if attempt < max_reconnect_attempts - 1:
+                    backoff = 2 ** (attempt + 1)
+                    await asyncio.sleep(backoff)
 
 
 # ---------------------------------------------------------------------------
@@ -478,6 +510,8 @@ async def main(n_devices: int, n_requests: int, interval_ms: int, offset: int = 
     console.print(f"  Modo queda:       {fall_mode}  (prob={fall_prob})")
     console.print(f"  Quedas esperadas: ~{expected_falls}")
     console.print(f"  Concorrência max: {max_concurrent:,}")
+    console.print(f"  MQTT QoS:         {MQTT_QOS}  ({'at-least-once + PUBACK' if MQTT_QOS == 1 else 'fire-and-forget'})")
+    console.print(f"  Clean session:    False  (persistent session)")
     console.print(f"  ThingsBoard:      {TB_HOST}:{TB_MQTT_PORT}")
     console.print()
 
@@ -505,6 +539,7 @@ async def main(n_devices: int, n_requests: int, interval_ms: int, offset: int = 
         "total_devices": len(valid),
         "requests_per_device": n_requests,
         "interval_ms": interval_ms,
+        "mqtt_qos": MQTT_QOS,
         "fall_mode": fall_mode,
         "fall_probability": fall_prob,
         "total_published": m.total_published,
