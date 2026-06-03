@@ -43,6 +43,7 @@ TB_BASE_URL = f"http://{TB_HOST}:{TB_HTTP_PORT}"
 ADMIN_EMAIL = os.getenv("TB_ADMIN_EMAIL", "sysadmin@thingsboard.org")
 ADMIN_PASSWORD = os.getenv("TB_ADMIN_PASSWORD", "sysadmin")
 TENANT_EMAIL = os.getenv("TB_TENANT_EMAIL", "tenant@thingsboard.org")
+TENANT_PASSWORD = os.getenv("TB_TENANT_PASSWORD", "tenant2026")
 
 # Intervalo entre saves parciais (em número de devices criados)
 SAVE_EVERY = 500
@@ -208,6 +209,67 @@ async def get_tenant_token(
     )
     resp.raise_for_status()
     return resp.json()["token"]
+
+
+async def activate_tenant_user(
+    client: httpx.AsyncClient, admin_token: str, user_id: str
+) -> None:
+    """Ativa o usuario tenant e define a senha para login direto."""
+    headers = {"X-Authorization": f"Bearer {admin_token}"}
+
+    # Tenta login direto — se funcionar, o usuario ja esta ativo.
+    try:
+        r = await client.post(
+            f"{TB_BASE_URL}/api/auth/login",
+            json={"username": TENANT_EMAIL, "password": TENANT_PASSWORD},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            console.print(f"[yellow]Usuário tenant já ativo (login OK)[/yellow]")
+            return
+    except Exception:
+        pass
+
+    # Obtem o link de ativacao (contem o token)
+    r = await client.get(
+        f"{TB_BASE_URL}/api/user/{user_id}/activationLink",
+        headers=headers, timeout=30,
+    )
+    if r.status_code != 200:
+        console.print(f"[yellow]Não foi possível obter link de ativação (status {r.status_code})[/yellow]")
+        return
+
+    activation_link = r.text.strip().strip('"')
+
+    # Extrai o token da URL: ...?activateToken=XXXXX
+    import urllib.parse
+    parsed = urllib.parse.urlparse(activation_link)
+    params = urllib.parse.parse_qs(parsed.query)
+    activate_token = params.get("activateToken", [None])[0]
+
+    if not activate_token:
+        # Tenta extrair do fragment (algumas versoes do TB usam fragment)
+        parsed_frag = urllib.parse.urlparse(activation_link.replace("#", "?", 1))
+        params_frag = urllib.parse.parse_qs(parsed_frag.query)
+        activate_token = params_frag.get("activateToken", [None])[0]
+
+    if not activate_token:
+        console.print(f"[yellow]Token de ativação não encontrado no link: {activation_link}[/yellow]")
+        return
+
+    # Ativa o usuario com a senha definida no .env
+    r = await client.post(
+        f"{TB_BASE_URL}/api/noauth/activate?sendActivationMail=false",
+        json={
+            "activateToken": activate_token,
+            "password": TENANT_PASSWORD,
+        },
+        timeout=30,
+    )
+    if r.status_code == 200:
+        console.print(f"[green]Usuário tenant ativado com senha '{TENANT_PASSWORD}'[/green]")
+    else:
+        console.print(f"[yellow]Ativação retornou status {r.status_code}: {r.text[:200]}[/yellow]")
 
 
 # ---------------------------------------------------------------------------
@@ -417,6 +479,9 @@ async def main(n_devices: int, concurrency: int) -> None:
 
         console.print("[cyan]Verificando usuário tenant...[/cyan]")
         user_id = await get_or_create_tenant_user(client, admin_token, tenant_id)
+
+        console.print("[cyan]Ativando usuário tenant (definindo senha)...[/cyan]")
+        await activate_tenant_user(client, admin_token, user_id)
 
         console.print("[cyan]Obtendo token do tenant via impersonação...[/cyan]")
         tenant_token = await get_tenant_token(client, admin_token, user_id)

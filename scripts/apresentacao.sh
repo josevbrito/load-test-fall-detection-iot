@@ -192,7 +192,8 @@ setup_dashboard() {
 show_links() {
     banner "LINKS DE ACESSO"
     echo -e "  ${BOLD}ThingsBoard:${RESET}  ${CYAN}http://localhost:8090${RESET}"
-    echo -e "    Login:       ${BOLD}sysadmin@thingsboard.org${RESET} / ${BOLD}sysadmin${RESET}"
+    echo -e "    Sysadmin:    ${BOLD}sysadmin@thingsboard.org${RESET} / ${BOLD}sysadmin${RESET}"
+    echo -e "    Tenant:      ${BOLD}tenant@thingsboard.org${RESET} / ${BOLD}tenant2026${RESET}"
     echo ""
     echo -e "  ${BOLD}Grafana:${RESET}      ${CYAN}http://localhost:3000${RESET}"
     echo -e "    Login:       ${BOLD}admin${RESET} / ${BOLD}admin${RESET}"
